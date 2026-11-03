@@ -20,6 +20,11 @@ export interface TelegramUpdate {
     };
     date: number;
     text?: string;
+    contact?: {
+      phone_number: string;
+      first_name: string;
+      user_id?: number;
+    };
   };
 }
 
@@ -58,7 +63,10 @@ export class TelegramBot {
   static async sendMessage(
     chatId: number | string,
     text: string,
-    options?: { parse_mode?: 'Markdown' | 'HTML' },
+    options?: {
+      parse_mode?: 'Markdown' | 'HTML';
+      reply_markup?: any;
+    },
   ): Promise<{ ok: boolean; result?: any; description?: string }> {
     if (!this.isConfigured()) {
       this.logger.warn('Telegram bot is not configured, skipping sendMessage');
@@ -73,6 +81,7 @@ export class TelegramBot {
           chat_id: chatId,
           text,
           parse_mode: options?.parse_mode,
+          reply_markup: options?.reply_markup,
         }),
       });
 
@@ -87,9 +96,12 @@ export class TelegramBot {
     }
   }
 
-  static async getUpdates(offset?: number, timeout = 10): Promise<TelegramUpdate[]> {
+  static async getUpdates(
+    offset?: number,
+    timeout = 10,
+  ): Promise<{ ok: boolean; result: TelegramUpdate[]; error?: string }> {
     if (!this.isConfigured()) {
-      return [];
+      return { ok: false, result: [], error: 'Not configured' };
     }
 
     try {
@@ -107,15 +119,20 @@ export class TelegramBot {
       const data = (await response.json()) as { ok: boolean; result?: TelegramUpdate[]; description?: string };
 
       if (!response.ok || !data.ok) {
-        this.logger.warn(`Telegram getUpdates failed: ${data.description || response.statusText}`);
-        return [];
+        return {
+          ok: false,
+          result: [],
+          error: data.description || response.statusText,
+        };
       }
 
-      return data.result ?? [];
+      return { ok: true, result: data.result ?? [] };
     } catch (error: any) {
-      this.logger.warn(`Telegram getUpdates network error: ${error?.message || error} (cause: ${error?.cause})`);
-      return [];
+      return {
+        ok: false,
+        result: [],
+        error: error?.message || String(error),
+      };
     }
   }
 }
-

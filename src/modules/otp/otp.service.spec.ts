@@ -103,4 +103,27 @@ describe('OtpService', () => {
     const statusAfter = await service.getTelegramSessionStatus(res.sessionToken);
     expect(statusAfter.status).toBe('SENT');
   });
+
+  it('should auto-send OTP for latest pending session on tokensiz start', async () => {
+    const res = await service.createTelegramSession('+998901234567', OtpPurpose.SIGN_UP);
+
+    const TelegramBot = require('../../infrastructure/TelegramBot').TelegramBot;
+    jest.spyOn(TelegramBot, 'sendMessage').mockResolvedValue({ ok: true });
+
+    const autoRes = await service.processTelegramLatestPending(123456789);
+    expect(autoRes.success).toBe(true);
+
+    const statusAfter = await service.getTelegramSessionStatus(res.sessionToken);
+    expect(statusAfter.status).toBe('SENT');
+  });
+
+  it('should process contact and send OTP', async () => {
+    const res = await service.createTelegramSession('+998901234567', OtpPurpose.SIGN_UP);
+
+    const TelegramBot = require('../../infrastructure/TelegramBot').TelegramBot;
+    jest.spyOn(TelegramBot, 'sendMessage').mockResolvedValue({ ok: true });
+
+    const contactRes = await service.processTelegramContact('+998901234567', 123456789);
+    expect(contactRes.success).toBe(true);
+  });
 });

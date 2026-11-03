@@ -152,6 +152,18 @@ export class OtpService {
       ttlSeconds,
     );
 
+    // Oxirgi yaratilgan sessiyani saqlaymiz (agar foydalanuvchi tokensiz Start bossa ham ushlab olish uchun)
+    await this.redisService.set(
+      'telegram:otp:latest_pending',
+      sessionToken,
+      ttlSeconds,
+    );
+    await this.redisService.set(
+      `telegram:otp:by_phone:${phone}`,
+      sessionToken,
+      ttlSeconds,
+    );
+
     const botUsername = env.TELEGRAM.BOT_USERNAME;
     const botUrl = botUsername
       ? `https://t.me/${botUsername}?start=${sessionToken}`
@@ -197,15 +209,18 @@ export class OtpService {
     // Yangi OTP yaratish
     const { code } = await this.createOtpRecord(session.phone, session.purpose, false);
 
-    // Telegram chatga chiroyli xabar yuborish
+    // Telegram chatga chiroyli HTML formatda xabar yuborish
     const text =
-      `✨ *Visual Discovery Platform*\n\n` +
+      `✨ <b>Visual Discovery Platform</b>\n\n` +
       `Sizning bir martalik tasdiqlash kodingiz:\n\n` +
-      `👉 \`${code}\` 👈\n\n` +
-      `⏱ Amal qilish muddati: ${Math.round(env.OTP.TTL / 60)} daqiqa.\n` +
-      `⚠️ *Xavfsizlik eslatmasi:* Ushbu kodni hech kimga, hatto administratorlarga ham bermang!`;
+      `👉 <code>${code}</code> 👈\n\n` +
+      `⏱ Amal qilish muddati: <b>${Math.round(env.OTP.TTL / 60)} daqiqa</b>.\n` +
+      `🔒 <i>Xavfsizlik eslatmasi: Ushbu kodni hech kimga, hatto administratorlarga ham bermang!</i>`;
 
-    const sendRes = await TelegramBot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+    const sendRes = await TelegramBot.sendMessage(chatId, text, {
+      parse_mode: 'HTML',
+      reply_markup: { remove_keyboard: true },
+    });
 
     if (!sendRes.ok) {
       this.logger.error(`Failed to deliver OTP to Telegram chatId ${chatId}: ${sendRes.description}`);
@@ -230,6 +245,60 @@ export class OtpService {
       success: true,
       message: 'Tasdiqlash kodi muvaffaqiyatli yuborildi!',
     };
+  }
+
+  /**
+   * Agar foydalanuvchi /start ni tokensiz bossa, so'nggi yaratilgan PENDING sessiyani topib kod yuboradi
+   */
+  async processTelegramLatestPending(chatId: number | string): Promise<{ success: boolean; message: string }> {
+    const latestToken = await this.redisService.get('telegram:otp:latest_pending');
+    if (!latestToken) {
+      return {
+        success: false,
+        message: 'Faol tasdiqlash sessiyasi topilmadi.',
+      };
+    }
+    return this.processTelegramStart(latestToken, chatId);
+  }
+
+  /**
+   * Agar foydalanuvchi botga kontaktini ulashsa, telefon orqali kod yuboradi
+   */
+  async processTelegramContact(
+    rawPhone: string,
+    chatId: number | string,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const phone = this.normalize(rawPhone);
+      const sessionToken = await this.redisService.get(`telegram:otp:by_phone:${phone}`);
+      if (sessionToken) {
+        return this.processTelegramStart(sessionToken, chatId);
+      }
+
+      // Agar sessiya topilmasa, lekin raqam bo'lsa, to'g'ridan-to'g'ri yangi SIGN_UP OTP yaratib beramiz
+      const { code } = await this.createOtpRecord(phone, OtpPurpose.SIGN_UP, false);
+      const text =
+        `✨ <b>Visual Discovery Platform</b>\n\n` +
+        `Sizning bir martalik tasdiqlash kodingiz:\n\n` +
+        `👉 <code>${code}</code> 👈\n\n` +
+        `⏱ Amal qilish muddati: <b>${Math.round(env.OTP.TTL / 60)} daqiqa</b>.\n` +
+        `🔒 <i>Xavfsizlik eslatmasi: Ushbu kodni hech kimga, hatto administratorlarga ham bermang!</i>`;
+
+      await TelegramBot.sendMessage(chatId, text, {
+        parse_mode: 'HTML',
+        reply_markup: { remove_keyboard: true },
+      });
+
+      return {
+        success: true,
+        message: 'Tasdiqlash kodi yuborildi!',
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err?.message || 'Telefon raqamni qayta ishlashda xatolik yuz berdi.',
+      };
+    }
   }
 
   /**

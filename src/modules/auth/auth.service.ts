@@ -141,7 +141,11 @@ export class AuthService {
     request: Request,
     response: Response,
   ) {
-    const phone = this.otp.normalize(dto.phone);
+    const rawPhone = dto.phone || dto.phoneNumber;
+    if (!rawPhone) {
+      throw new BadRequestException('Telefon raqami talab qilinadi.');
+    }
+    const phone = this.otp.normalize(rawPhone);
     const redisKey = `auth:signup:pending:${phone}`;
 
     const pendingData = await this.redis.get(redisKey);
