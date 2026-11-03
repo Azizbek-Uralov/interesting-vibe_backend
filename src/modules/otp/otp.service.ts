@@ -11,7 +11,6 @@ import { RedisService } from '../../db/redis/redis.service';
 import { env } from '../../db';
 import { PrismaService } from '../../db/prisma/prisma.service';
 import { OtpPurpose } from '../../../generated/prisma/enums';
-import { Eskiz } from '../../infrastructure/Eskiz';
 import { TelegramBot } from '../../infrastructure/TelegramBot';
 
 export interface TelegramOtpSession {
@@ -125,37 +124,10 @@ export class OtpService {
   }
 
   /**
-   * Asosiy sendOtp metodi: OTP_PROVIDER ga qarab Eskiz yoki Telegram orqali ishlaydi
+   * Asosiy sendOtp metodi: Telegram orqali OTP sessiyasi yaratadi
    */
   async sendOtp(phoneInput: string, purpose: OtpPurpose) {
     const phone = this.normalize(phoneInput);
-
-    if (env.OTP_PROVIDER === 'ESKIZ') {
-      const { code, expiresIn, resendAfter } = await this.createOtpRecord(phone, purpose, true);
-      try {
-        await Eskiz.sendSms(
-          phone.replace(/\D/g, ''),
-          `Visual platform tasdiqlash kodi: ${code}`,
-        );
-        return {
-          provider: 'ESKIZ',
-          expiresIn,
-          resendAfter,
-        };
-      } catch (error) {
-        this.logger.error('Eskiz SMS failed, reverting OTP record:', error);
-        await this.prisma.otpVerification.updateMany({
-          where: { phoneNumber: phone, purpose, consumedAt: null },
-          data: { consumedAt: new Date() },
-        });
-        await this.redisService.client.del(`otp:resend:${purpose}:${phone}`);
-        throw new ServiceUnavailableException(
-          'SMS yuborilmadi. Keyinroq qayta urinib ko‘ring.',
-        );
-      }
-    }
-
-    // TELEGRAM PROVIDER
     return this.createTelegramSession(phone, purpose);
   }
 

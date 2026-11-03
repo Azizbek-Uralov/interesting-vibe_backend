@@ -38,12 +38,6 @@ export const env = {
     ATTEMPTS: positiveNumber('OTP_ATTEMPTS'),
     SECRET: required('OTP_SECRET'),
   },
-  ESKIZ: {
-    BASE_URL: process.env.ESKIZ_BASE_URL ?? '',
-    EMAIL: process.env.ESKIZ_EMAIL ?? '',
-    PASSWORD: process.env.ESKIZ_PASSWORD ?? '',
-    FROM: process.env.ESKIZ_FROM ?? '',
-  },
   TOKEN: {
     ACCESS_KEY: required('ACCESS_TOKEN_KEY'),
     ACCESS_TIME: required('ACCESS_TOKEN_TIME'),
