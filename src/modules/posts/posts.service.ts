@@ -13,7 +13,7 @@ import { QueryPostsDto } from './dto/query.posts.dto';
 import { ReorderMediaDto } from './dto/reorder-media.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 
-const postInclude = {
+const getPostInclude = (viewerId?: string) => ({
   user: {
     select: {
       id: true,
@@ -39,9 +39,17 @@ const postInclude = {
       likes: true,
     },
   },
-} as const;
+  likes: viewerId
+    ? {
+        where: { userId: viewerId },
+        select: { userId: true },
+      }
+    : false,
+});
 
-type PostWithDetails = Prisma.PostGetPayload<{ include: typeof postInclude }>;
+const postInclude = getPostInclude();
+
+type PostWithDetails = any;
 
 @Injectable()
 export class PostsService {
@@ -71,7 +79,7 @@ export class PostsService {
   async mine(userId: string) {
     const posts = await this.prisma.post.findMany({
       where: { userId },
-      include: postInclude,
+      include: getPostInclude(userId),
       orderBy: { updatedAt: 'desc' },
     });
     return posts.map((post) => this.serialize(post, userId));
@@ -85,7 +93,7 @@ export class PostsService {
         status: PostStatus.PUBLISHED,
         user: { isPrivate: false },
       },
-      include: postInclude,
+      include: getPostInclude(viewerId),
       orderBy: { publishedAt: 'desc' },
       take: limit,
       ...(query?.cursor ? { skip: 1, cursor: { id: query.cursor } } : {}),
@@ -97,7 +105,7 @@ export class PostsService {
   async findOne(postId: string, viewerId?: string) {
     const post = await this.prisma.post.findUnique({
       where: { id: postId },
-      include: postInclude,
+      include: getPostInclude(viewerId),
     });
 
     if (!post) throw new NotFoundException('Post topilmadi.');
@@ -207,6 +215,56 @@ export class PostsService {
     });
 
     return this.serializeMedia(media);
+  }
+
+  async addMediaBatch(userId: string, postId: string, dtos: AddMediaDto[]) {
+    const post = await this.ownedPost(userId, postId);
+
+    if (!dtos || dtos.length === 0) {
+      throw new BadRequestException('Kamida bitta media fayl kerak.');
+    }
+
+    if (post.media.length + dtos.length > 8) {
+      throw new BadRequestException(
+        `Bitta postga ko‘pi bilan 8 ta media qo‘shish mumkin. Hozirgi: ${post.media.length}, qo‘shilmoqda: ${dtos.length}`,
+      );
+    }
+
+    const newVideosCount = dtos.filter((d) => d.type === MediaType.VIDEO).length;
+    const existingVideosCount = post.media.filter(
+      (m) => m.type === MediaType.VIDEO,
+    ).length;
+    if (existingVideosCount + newVideosCount > 3) {
+      throw new BadRequestException(
+        'Bitta postga ko‘pi bilan 3 ta video qo‘shish mumkin.',
+      );
+    }
+
+    for (const dto of dtos) {
+      this.assertMimeType(dto.type, dto.mimeType);
+    }
+
+    const startPosition = post.media.length;
+    const createdMedia = await this.prisma.$transaction(
+      dtos.map((dto, index) =>
+        this.prisma.postMedia.create({
+          data: {
+            postId,
+            type: dto.type,
+            storageKey: dto.storageKey,
+            mimeType: dto.mimeType,
+            width: dto.width,
+            height: dto.height,
+            durationSeconds: dto.durationSeconds,
+            fileSize:
+              dto.fileSize === undefined ? undefined : BigInt(dto.fileSize),
+            position: startPosition + index,
+          },
+        }),
+      ),
+    );
+
+    return createdMedia.map((m) => this.serializeMedia(m));
   }
 
   async removeMedia(userId: string, postId: string, mediaId: string) {
@@ -356,20 +414,21 @@ export class PostsService {
     }
   }
 
-  private serialize(post: PostWithDetails, _viewerId?: string) {
-    const { user, media, tags, _count, ...postFields } = post;
+  private serialize(post: any, _viewerId?: string) {
+    const { user, media, tags, _count, likes, ...postFields } = post;
     const { isPrivate: _isPrivate, ...author } = user;
 
     return {
       ...postFields,
       author,
       likesCount: _count?.likes ?? 0,
-      tags: (tags ?? []).map((pt) => ({
-        id: pt.tag.id,
-        name: pt.tag.translations[0]?.name ?? '',
-        slug: pt.tag.translations[0]?.slug ?? '',
+      isLiked: Array.isArray(likes) && likes.length > 0,
+      tags: (tags ?? []).map((pt: any) => ({
+        id: pt.tag?.id,
+        name: pt.tag?.translations?.[0]?.name ?? '',
+        slug: pt.tag?.translations?.[0]?.slug ?? '',
       })),
-      media: media.map((item) => this.serializeMedia(item)),
+      media: media.map((item: any) => this.serializeMedia(item)),
     };
   }
 

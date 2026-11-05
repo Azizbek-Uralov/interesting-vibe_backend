@@ -130,6 +130,21 @@ export class PostsController {
     return this.posts.addMedia(request.user.id, id, dto);
   }
 
+  @Post(':id/media/batch')
+  @UseGuards(AccessTokenGuard)
+  @ApiOperation({ summary: 'Attach up to 8 uploaded media items to a post at once' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiBody({ type: [AddMediaDto] })
+  @ApiBearerAuth()
+  @ApiCookieAuth('accessToken')
+  addMediaBatch(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dtos: AddMediaDto[],
+  ) {
+    return this.posts.addMediaBatch(request.user.id, id, dtos);
+  }
+
   @Patch(':id/media/order')
   @UseGuards(AccessTokenGuard)
   @ApiOperation({ summary: 'Set the complete display order of post media' })

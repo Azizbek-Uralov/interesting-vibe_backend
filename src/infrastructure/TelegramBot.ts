@@ -47,7 +47,10 @@ export class TelegramBot {
     return `https://api.telegram.org/bot${this.token}`;
   }
 
-  static async getMe(): Promise<{ ok: boolean; result?: { id: number; username: string; first_name: string } }> {
+  static async getMe(): Promise<{
+    ok: boolean;
+    result?: { id: number; username: string; first_name: string };
+  }> {
     if (!this.isConfigured()) {
       return { ok: false };
     }
@@ -87,7 +90,9 @@ export class TelegramBot {
 
       const data = (await response.json()) as any;
       if (!response.ok || !data.ok) {
-        this.logger.error(`Telegram sendMessage failed: ${data.description || response.statusText}`);
+        this.logger.error(
+          `Telegram sendMessage failed: ${data.description || response.statusText}`,
+        );
       }
       return data;
     } catch (error) {
@@ -116,7 +121,11 @@ export class TelegramBot {
         signal: controller.signal,
       }).finally(() => clearTimeout(timer));
 
-      const data = (await response.json()) as { ok: boolean; result?: TelegramUpdate[]; description?: string };
+      const data = (await response.json()) as {
+        ok: boolean;
+        result?: TelegramUpdate[];
+        description?: string;
+      };
 
       if (!response.ok || !data.ok) {
         return {

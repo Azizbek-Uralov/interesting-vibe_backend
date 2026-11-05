@@ -19,7 +19,7 @@ import { ChatService } from './chat.service';
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   // Foydalanuvchi ID -> unga tegishli barcha ulangan socket ID lar to‘plami
   private onlineUsers = new Map<string, Set<string>>();
@@ -125,23 +125,38 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         data.content,
       );
 
-      // 1. Suhbat xonasidagi barchaga (ikkala tomonga) xabarni uzatish
-      this.server
-        .to(`conversation:${data.conversationId}`)
-        .emit('new_message', result.message);
-
-      // 2. Qabul qiluvchining shaxsiy user xonasiga ham uzatish (agar u boshqa sahifada bo‘lsa unread ko‘rsatish uchun)
-      this.server
-        .to(`user:${result.partnerId}`)
-        .emit('new_message_notification', {
-          conversationId: data.conversationId,
-          message: result.message,
-        });
+      // Barcha ulangan xonalarga real-time yetkazish
+      this.emitNewMessage(
+        data.conversationId,
+        result.partnerId,
+        userId,
+        result.message,
+      );
 
       return { success: true, message: result.message };
     } catch (error: any) {
       return { error: error.message || 'Xabar yuborishda xatolik yuz berdi.' };
     }
+  }
+
+  // Umumiy xabar tarqatuvchi metod (REST controller va Socket uchun)
+  emitNewMessage(
+    conversationId: string,
+    partnerId: string,
+    senderId: string,
+    message: any,
+  ) {
+    if (!this.server) return;
+    // 1. Suhbat xonasi
+    this.server.to(`conversation:${conversationId}`).emit('new_message', message);
+    // 2. Qabul qiluvchining shaxsiy xonasi
+    this.server.to(`user:${partnerId}`).emit('new_message', message);
+    this.server.to(`user:${partnerId}`).emit('new_message_notification', {
+      conversationId,
+      message,
+    });
+    // 3. Yuboruvchining o‘zi (boshqa ochiq tablarida ham ko‘rinishi uchun)
+    this.server.to(`user:${senderId}`).emit('new_message', message);
   }
 
   // 6. Typing status (yozmoqda...)
@@ -221,7 +236,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return header.replace(/^Bearer\s+/i, '').trim();
     }
 
-    // 3. cookie
+    // 3. query param
+    const queryToken =
+      (client.handshake.query?.token as string) ||
+      (client.handshake.query?.accessToken as string);
+    if (queryToken) {
+      return queryToken.replace(/^Bearer\s+/i, '').trim();
+    }
+
+    // 4. cookie
     const rawCookie = client.handshake.headers?.cookie;
     if (rawCookie) {
       const match = rawCookie

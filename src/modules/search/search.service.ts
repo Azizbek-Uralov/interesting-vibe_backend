@@ -95,12 +95,18 @@ export class SearchService {
             user: { select: publicUserSelect },
             media: { orderBy: { position: 'asc' } },
             _count: { select: { likes: true } },
+            likes: viewerId
+              ? {
+                  where: { userId: viewerId },
+                  select: { userId: true },
+                }
+              : false,
           },
         }),
       ]);
 
       result.posts = {
-        data: posts.map((p) => ({
+        data: posts.map((p: any) => ({
           id: p.id,
           title: p.title,
           description: p.description,
@@ -108,7 +114,8 @@ export class SearchService {
           publishedAt: p.publishedAt,
           author: p.user,
           likesCount: p._count.likes,
-          media: p.media.map((m) => ({
+          isLiked: Array.isArray(p.likes) && p.likes.length > 0,
+          media: p.media.map((m: any) => ({
             ...m,
             url: `/api/v1/media/file/${m.storageKey}`,
             fileSize: m.fileSize ? m.fileSize.toString() : null,

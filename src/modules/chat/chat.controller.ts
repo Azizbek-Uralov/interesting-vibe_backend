@@ -22,6 +22,7 @@ import {
 import { AccessTokenGuard } from '../../common/guards/access-token.guard';
 import type { AuthenticatedRequest } from '../../common/guards/access-token.guard';
 import { ChatService } from './chat.service';
+import { ChatGateway } from './chat.gateway';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { GetMessagesQueryDto } from './dto/get-messages-query.dto';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -32,7 +33,10 @@ import { SendMessageDto } from './dto/send-message.dto';
 @UseGuards(AccessTokenGuard)
 @Controller('chats')
 export class ChatController {
-  constructor(private readonly chatService: ChatService) {}
+  constructor(
+    private readonly chatService: ChatService,
+    private readonly chatGateway: ChatGateway,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Joriy foydalanuvchining barcha suhbatlar ro‘yxati' })
@@ -83,6 +87,15 @@ export class ChatController {
       conversationId,
       dto.content,
     );
+
+    // WebSocket orqali barcha ulangan tomonlarga uzatish
+    this.chatGateway.emitNewMessage(
+      conversationId,
+      result.partnerId,
+      req.user.id,
+      result.message,
+    );
+
     return result.message;
   }
 

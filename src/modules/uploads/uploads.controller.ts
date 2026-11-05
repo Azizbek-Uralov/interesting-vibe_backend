@@ -9,10 +9,11 @@ import {
   Req,
   Res,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -53,6 +54,31 @@ export class UploadsController {
   @ApiCookieAuth('accessToken')
   async upload(@UploadedFile() file: any) {
     return this.uploadsService.uploadFile(file as UploadedMulterFile);
+  }
+
+  @Post('upload-multiple')
+  @UseGuards(AccessTokenGuard)
+  @UseInterceptors(FilesInterceptor('files', 8))
+  @ApiOperation({ summary: 'Upload up to 8 images or videos in one request' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        files: {
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary',
+          },
+        },
+      },
+    },
+  })
+  @ApiBearerAuth()
+  @ApiCookieAuth('accessToken')
+  async uploadMultiple(@UploadedFiles() files: any[]) {
+    return this.uploadsService.uploadMultipleFiles(files as UploadedMulterFile[]);
   }
 
   @Get('file/:key')

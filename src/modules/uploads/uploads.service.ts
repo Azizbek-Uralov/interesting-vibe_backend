@@ -91,6 +91,24 @@ export class UploadsService {
     };
   }
 
+  async uploadMultipleFiles(files: UploadedMulterFile[]): Promise<UploadResponseDto[]> {
+    if (!files || files.length === 0) {
+      throw new BadRequestException('Hech qanday fayl yuborilmadi.');
+    }
+    if (files.length > 8) {
+      throw new BadRequestException(
+        'Bir vaqtning o‘zida ko‘pi bilan 8 ta fayl yuklash mumkin.',
+      );
+    }
+
+    const results: UploadResponseDto[] = [];
+    for (const file of files) {
+      const res = await this.uploadFile(file);
+      results.push(res);
+    }
+    return results;
+  }
+
   getFilePath(storageKey: string): { filePath: string; mimeType: string } {
     // Path traversal oldini olish
     const safeKey = path.basename(storageKey);

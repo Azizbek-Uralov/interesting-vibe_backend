@@ -103,21 +103,28 @@ export class UsersService {
           userId: user.id,
           status: PostStatus.PUBLISHED,
         },
-        take: 12,
+        take: 30,
         orderBy: { publishedAt: 'desc' },
         include: {
           media: { orderBy: { position: 'asc' } },
           _count: { select: { likes: true } },
+          likes: viewerId
+            ? {
+                where: { userId: viewerId },
+                select: { userId: true },
+              }
+            : false,
         },
       });
 
-      recentPosts = posts.map((p) => ({
+      recentPosts = posts.map((p: any) => ({
         id: p.id,
         title: p.title,
         description: p.description,
         publishedAt: p.publishedAt,
         likesCount: p._count.likes,
-        media: p.media.map((m) => ({
+        isLiked: Array.isArray(p.likes) && p.likes.length > 0,
+        media: p.media.map((m: any) => ({
           ...m,
           url: `/api/v1/media/file/${m.storageKey}`,
           fileSize: m.fileSize ? m.fileSize.toString() : null,
