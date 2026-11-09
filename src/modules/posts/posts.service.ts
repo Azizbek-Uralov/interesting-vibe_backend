@@ -380,7 +380,7 @@ export class PostsService {
     for (const name of cleanNames) {
       const slug = name.replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
-      let tagTranslation = await this.prisma.tagTranslation.findFirst({
+      const tagTranslation = await this.prisma.tagTranslation.findFirst({
         where: { slug },
         select: { tagId: true },
       });

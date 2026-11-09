@@ -84,6 +84,10 @@ export class AuthService {
     return undefined;
   }
 
+  // ==========================================
+  // WEB AUTH METHODS (Cookies & Web Client)
+  // ==========================================
+
   // 1. SIGNUP: ma'lumotlarni tekshirish va OTP yuborish
   async signup(dto: SignupDto) {
     const phone = this.otp.normalize(dto.phone);
@@ -204,6 +208,13 @@ export class AuthService {
 
     return {
       message: 'Akkaunt yaratildi va tizimga kirdingiz.',
+      user: {
+        id: user.id,
+        phone: user.phone,
+        fullName: user.fullName,
+        username: user.username,
+        role: user.role,
+      },
       ...(mobileTokens ?? {}),
     };
   }
@@ -254,11 +265,18 @@ export class AuthService {
 
     return {
       message: 'Tizimga muvaffaqiyatli kirdingiz.',
+      user: {
+        id: user.id,
+        phone: user.phone,
+        fullName: user.fullName,
+        username: user.username,
+        role: user.role,
+      },
       ...(this.isMobile(request) ? tokens : {}),
     };
   }
 
-  // 4. REFRESH: cookie (web) yoki body (mobile) orqali tokenni yangilash
+  // 4. REFRESH: cookie (web) orqali tokenni yangilash
   async refresh(
     request: Request,
     response: Response,
@@ -337,7 +355,7 @@ export class AuthService {
     };
   }
 
-  // 5. Joriy sessiyadan chiqish
+  // 5. Joriy sessiyadan chiqish (Web)
   async signOut(
     request: Request,
     response: Response,
@@ -388,7 +406,280 @@ export class AuthService {
     return { message: 'Barcha sessiyalar bekor qilindi.' };
   }
 
-  // Sessiya yaratish va platformaga mos token yetkazish
+  // ==========================================
+  // MOBILE AUTH METHODS (Direct Token Payloads)
+  // ==========================================
+
+  // Mobile 1: Signup & Send OTP
+  async mobileSignup(dto: SignupDto) {
+    return this.signup(dto);
+  }
+
+  // Mobile 2: Verify OTP & Return Tokens directly
+  async mobileVerifySignup(dto: VerifySignupOtpDto, request: Request) {
+    const rawPhone = dto.phone || dto.phoneNumber;
+    if (!rawPhone) {
+      throw new BadRequestException('Telefon raqami talab qilinadi.');
+    }
+    const phone = this.otp.normalize(rawPhone);
+    const redisKey = `auth:signup:pending:${phone}`;
+
+    const pendingData = await this.redis.get(redisKey);
+
+    if (!pendingData) {
+      throw new BadRequestException(
+        'Ro‘yxatdan o‘tish muddati tugagan. Qaytadan signup qiling.',
+      );
+    }
+
+    const signupData = JSON.parse(pendingData) as {
+      phone: string;
+      fullName: string;
+      username: string;
+      password: string;
+    };
+
+    await this.otp.verifyOtp(phone, dto.code, OtpPurpose.SIGN_UP);
+
+    let user;
+    try {
+      user = await this.prisma.user.create({
+        data: {
+          phone: signupData.phone,
+          fullName: signupData.fullName,
+          username: signupData.username,
+          password: signupData.password,
+          isVerified: true,
+        },
+      });
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Telefon raqami yoki username band.');
+      }
+      throw error;
+    }
+
+    await this.redis.del(redisKey);
+
+    const tokens = await this.createMobileSession(
+      user.id,
+      user.role,
+      user.status,
+      request,
+    );
+
+    return {
+      message: 'Akkaunt yaratildi va tizimga kirdingiz.',
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: {
+        id: user.id,
+        phone: user.phone,
+        fullName: user.fullName,
+        username: user.username,
+        role: user.role,
+      },
+    };
+  }
+
+  // Mobile 3: Signin with username & password, returns tokens directly
+  async mobileSignin(dto: SignInDto, request: Request) {
+    const username = dto.username.trim();
+    const attemptsKey = `auth:signin:attempts:${username.toLowerCase()}`;
+
+    const attempts = Number((await this.redis.client.get(attemptsKey)) ?? 0);
+
+    if (attempts >= 5) {
+      throw new HttpException(
+        'Kirish urinishlari vaqtincha cheklangan. Keyinroq urinib ko‘ring.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { username },
+    });
+
+    if (!user || !(await Crypt.compare(dto.password, user.password))) {
+      const count = await this.redis.client.incr(attemptsKey);
+
+      if (count === 1) {
+        await this.redis.client.expire(attemptsKey, 15 * 60);
+      }
+
+      throw new UnauthorizedException('Username yoki password noto‘g‘ri.');
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new ForbiddenException(
+        'Akkauntdan foydalanish vaqtincha cheklangan.',
+      );
+    }
+
+    await this.redis.client.del(attemptsKey);
+
+    const tokens = await this.createMobileSession(
+      user.id,
+      user.role,
+      user.status,
+      request,
+    );
+
+    return {
+      message: 'Tizimga muvaffaqiyatli kirdingiz.',
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: {
+        id: user.id,
+        phone: user.phone,
+        fullName: user.fullName,
+        username: user.username,
+        role: user.role,
+      },
+    };
+  }
+
+  // Mobile 4: Refresh token
+  async mobileRefresh(refreshToken: string) {
+    if (!refreshToken) {
+      throw new BadRequestException('Refresh token talab qilinadi.');
+    }
+
+    const payload = await Token.verifyRefreshToken(refreshToken);
+
+    if (!payload.sid || !payload.id) {
+      throw new UnauthorizedException('Refresh token noto‘g‘ri.');
+    }
+
+    const session = await this.prisma.session.findFirst({
+      where: {
+        id: payload.sid,
+        userId: payload.id,
+        refreshTokenHash: Crypt.hashToken(refreshToken),
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      include: { user: true },
+    });
+
+    if (!session || session.user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException(
+        'Sessiya bekor qilingan yoki muddati tugagan.',
+      );
+    }
+
+    const accessToken = await Token.generateAccess({
+      id: session.user.id,
+      sid: session.id,
+      role: session.user.role,
+      status: session.user.status,
+    });
+
+    const newRefreshToken = await Token.generateRefresh({
+      id: session.user.id,
+      sid: session.id,
+      role: session.user.role,
+      status: session.user.status,
+    });
+
+    const rotated = await this.prisma.session.updateMany({
+      where: {
+        id: session.id,
+        refreshTokenHash: Crypt.hashToken(refreshToken),
+        revokedAt: null,
+      },
+      data: {
+        refreshTokenHash: Crypt.hashToken(newRefreshToken),
+        expiresAt: new Date(
+          Date.now() + durationSeconds(env.TOKEN.REFRESH_TIME) * 1000,
+        ),
+        lastUsedAt: new Date(),
+      },
+    });
+
+    if (rotated.count !== 1) {
+      throw new UnauthorizedException('Refresh token qayta ishlatilgan.');
+    }
+
+    return {
+      accessToken,
+      refreshToken: newRefreshToken,
+    };
+  }
+
+  // Mobile 5: Logout
+  async mobileSignOut(refreshToken?: string, sidFromToken?: string) {
+    let sid = sidFromToken;
+
+    if (refreshToken) {
+      try {
+        const payload = await Token.verifyRefreshToken(refreshToken);
+        if (payload.sid) {
+          sid = payload.sid;
+        }
+      } catch {
+        // Token format error
+      }
+    }
+
+    if (sid) {
+      await this.prisma.session.updateMany({
+        where: {
+          id: sid,
+          revokedAt: null,
+        },
+        data: { revokedAt: new Date() },
+      });
+    }
+
+    return { message: 'Tizimdan chiqildi.' };
+  }
+
+  // Helper: Mobile session creation without cookies
+  private async createMobileSession(
+    userId: string,
+    role: IPayload['role'],
+    status: IPayload['status'],
+    request: Request,
+  ): Promise<AuthTokens> {
+    const sid = randomUUID();
+
+    const refreshToken = await Token.generateRefresh({
+      id: userId,
+      sid,
+      role,
+      status,
+    });
+
+    const accessToken = await Token.generateAccess({
+      id: userId,
+      sid,
+      role,
+      status,
+    });
+
+    await this.prisma.session.create({
+      data: {
+        id: sid,
+        userId,
+        refreshTokenHash: Crypt.hashToken(refreshToken),
+        expiresAt: new Date(
+          Date.now() + durationSeconds(env.TOKEN.REFRESH_TIME) * 1000,
+        ),
+        userAgent: (request.get('user-agent') || 'Mobile App').slice(0, 500),
+        ipAddress: request.ip,
+      },
+    });
+
+    return { accessToken, refreshToken };
+  }
+
+  // Sessiya yaratish va platformaga mos token yetkazish (Web)
   private async createSession(
     userId: string,
     role: IPayload['role'],
